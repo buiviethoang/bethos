@@ -3,6 +3,7 @@ package main
 import (
 	"bethos/internal/input/influxdb"
 	"bethos/internal/merger"
+	"bethos/internal/resource"
 	"bethos/processors"
 	"context"
 	"log"
@@ -82,9 +83,23 @@ func main() {
 
 	service.RegisterBatchProcessor(
 		"telemetry_aggregator",
-		service.NewConfigSpec(),
-		func(*service.ParsedConfig, *service.Resources) (service.BatchProcessor, error) {
-			return &processors.Aggregator{}, nil
+		service.NewConfigSpec().
+			Field(service.NewStringField("resource_matrix_path")),
+		func(conf *service.ParsedConfig, res *service.Resources) (service.BatchProcessor, error) {
+
+			path, err := conf.FieldString("resource_matrix_path")
+			if err != nil {
+				return nil, err
+			}
+
+			cache, err := resource.LoadFromResourceMatrix(path)
+			if err != nil {
+				return nil, err
+			}
+
+			return &processors.Aggregator{
+				ResourceCache: cache,
+			}, nil
 		},
 	)
 

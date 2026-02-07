@@ -24,7 +24,8 @@ pipeline:
         batch_size: 50000
         max_lines: 2000000
 
-    - telemetry_aggregator: {}
+    - telemetry_aggregator:
+        resource_matrix_path: "config/resource_matrix.json"
 
     - kafka_message_builder: {}
 

@@ -8,6 +8,8 @@ import (
 type Resource struct {
 	ResourceID   string `json:"resource_id"`
 	ResourceName string `json:"resource_name"`
+	Operation    string `json:"operation"`
+	State        string `json:"state"`
 }
 
 type Cache struct {

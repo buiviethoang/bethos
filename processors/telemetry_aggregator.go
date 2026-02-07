@@ -2,13 +2,16 @@ package processors
 
 import (
 	"bethos/internal/model"
+	"bethos/internal/resource"
 	"context"
 	"time"
 
 	"github.com/warpstreamlabs/bento/public/service"
 )
 
-type Aggregator struct{}
+type Aggregator struct {
+	ResourceCache *resource.Cache
+}
 
 func (a *Aggregator) Close(ctx context.Context) error {
 	return nil
@@ -34,6 +37,12 @@ func (a *Aggregator) ProcessBatch(
 			continue
 		}
 
+		resourceName, ok := a.ResourceCache.IDToName[row.ResourceID]
+		if !ok {
+			// unknown or inactive resource
+			continue
+		}
+
 		// Keep one source message per VIN
 		if _, exists := sourceMsg[row.Vincode]; !exists {
 			sourceMsg[row.Vincode] = msg
@@ -49,7 +58,7 @@ func (a *Aggregator) ProcessBatch(
 		if receivedAt == 0 {
 			receivedAt = time.Now().UnixMilli()
 		}
-		v[row.ResourceName] = model.MetricValue{
+		v[resourceName] = model.MetricValue{
 			Value:      row.Value,
 			ReceivedAt: receivedAt,
 		}
@@ -57,17 +66,26 @@ func (a *Aggregator) ProcessBatch(
 
 	// Build ONE output batch
 	outBatch := service.MessageBatch{}
+	now := time.Now().UnixMilli()
 
 	for vin, metrics := range state {
 		src := sourceMsg[vin]
-
-		// MUST derive from existing message
 		newMsg := src.Copy()
-		newMsg.SetStructured(map[string]any{
-			"vincode": vin,
-			"metrics": metrics,
-		})
+		data := map[string]any{
+			"id": vin,
+		}
 
+		for name, metric := range metrics {
+			data[name] = metric
+		}
+
+		payload := map[string]any{
+			"num_of_data": 1,
+			"data":        data,
+			"produce_at":  now,
+		}
+
+		newMsg.SetStructured(payload)
 		outBatch = append(outBatch, newMsg)
 	}
 	// Return slice of batches
