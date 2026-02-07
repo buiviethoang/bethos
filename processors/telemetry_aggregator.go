@@ -11,8 +11,7 @@ import (
 type Aggregator struct{}
 
 func (a *Aggregator) Close(ctx context.Context) error {
-	//TODO implement me
-	panic("implement me")
+	return nil
 }
 
 func (a *Aggregator) ProcessBatch(
@@ -46,9 +45,13 @@ func (a *Aggregator) ProcessBatch(
 			state[row.Vincode] = v
 		}
 
+		receivedAt := row.TS
+		if receivedAt == 0 {
+			receivedAt = time.Now().UnixMilli()
+		}
 		v[row.ResourceName] = model.MetricValue{
 			Value:      row.Value,
-			ReceivedAt: time.Now().UnixMilli(),
+			ReceivedAt: receivedAt,
 		}
 	}
 
@@ -67,7 +70,6 @@ func (a *Aggregator) ProcessBatch(
 
 		outBatch = append(outBatch, newMsg)
 	}
-
 	// Return slice of batches
 	return []service.MessageBatch{outBatch}, nil
 }

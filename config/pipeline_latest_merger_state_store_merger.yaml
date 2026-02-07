@@ -1,0 +1,30 @@
+# Strategy 2 (state_store) - Pipeline 1: merge only, write to cache every 2 min. Output drop.
+# Run with publisher in streams mode, or use Redis cache and run this + publisher as two processes.
+resources:
+  caches:
+    latest_state:
+      memory: {}
+
+input:
+  broker:
+    inputs:
+      - kafka_franz:
+          seed_brokers:
+            - localhost:19091
+            - localhost:19092
+            - localhost:19093
+          topics:
+            - sensor-service.dispatch.telemetry-aggregated
+          consumer_group: bento_latest_merger_state
+      - generate:
+          interval: "2m"
+          mapping: 'root = {"_flush": true}'
+
+pipeline:
+  processors:
+    - latest_merger:
+        strategy: state_store
+        cache: latest_state
+
+output:
+  drop: {}

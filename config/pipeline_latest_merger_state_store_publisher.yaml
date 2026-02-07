@@ -1,0 +1,26 @@
+# Strategy 2 (state_store) - Pipeline 2: every 2 min read from cache and publish to Kafka.
+# Same process: run in streams mode so merger and publisher share this cache.
+# Two processes: use Redis cache in both merger and publisher configs (same connection).
+resources:
+  caches:
+    latest_state:
+      memory: {}
+
+input:
+  generate:
+    interval: "2m"
+    mapping: 'root = {}'
+
+pipeline:
+  processors:
+    - latest_state_publisher:
+        cache: latest_state
+
+output:
+  kafka_franz:
+    seed_brokers:
+      - localhost:19091
+      - localhost:19092
+      - localhost:19093
+    topic: sensor-service.dispatch.telemetry-latest
+    client_id: bento_latest_publisher

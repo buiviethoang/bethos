@@ -1,0 +1,30 @@
+# Strategy 1 (inline): one pipeline merge + emit every 2 min to Kafka.
+# Run: BENTO_CONFIG=./config/pipeline_latest_merger.yaml go run .
+input:
+  broker:
+    inputs:
+      - kafka_franz:
+          seed_brokers:
+            - localhost:19091
+            - localhost:19092
+            - localhost:19093
+          topics:
+            - sensor-service.dispatch.telemetry-aggregated
+          consumer_group: bento_latest_merger
+      - generate:
+          interval: "2m"
+          mapping: 'root = {"_flush": true}'
+
+pipeline:
+  processors:
+    - latest_merger:
+        strategy: inline
+
+output:
+  kafka_franz:
+    seed_brokers:
+      - localhost:19091
+      - localhost:19092
+      - localhost:19093
+    topic: sensor-service.dispatch.telemetry-latest
+    client_id: bento_latest_merger

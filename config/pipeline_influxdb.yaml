@@ -1,0 +1,30 @@
+# Pipeline using InfluxDB input: query by Pod (2s chunks, 10s lookback), then aggregate and push to Kafka.
+# Set url, token, org, bucket and pods to match your InfluxDB. Run: BENTO_CONFIG=./config/pipeline_influxdb.yaml go run .
+input:
+  influxdb:
+    url: "http://localhost:8086"
+    token: "${INFLUX_TOKEN}"
+    org: "my-org"
+    bucket: "telemetry"
+    pods:
+      - "pod-1"
+      - "pod-2"
+    chunk_duration: "2s"
+    lookback: "10s"
+    resource_map_path: "./config/resource_matrix.json"
+    batch_size: 5000
+    measurement: "telemetry"
+
+pipeline:
+  processors:
+    - telemetry_aggregator: {}
+    - kafka_message_builder: {}
+
+output:
+  kafka_franz:
+    seed_brokers:
+      - localhost:19091
+      - localhost:19092
+      - localhost:19093
+    topic: sensor-service.dispatch.telemetry-aggregated
+    client_id: bento_influxdb

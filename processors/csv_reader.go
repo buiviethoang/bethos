@@ -5,42 +5,76 @@ import (
 	"bufio"
 	"context"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/warpstreamlabs/bento/public/service"
 )
 
+const defaultMaxLines = 2_000_000
+
 type CSVReader struct {
 	FilePath string
-	Batch    int
+	Batch    int // I/O chunk size (lines per read loop); also used as max per batch if we ever split
+	MaxLines int // cap total lines read per file (0 = defaultMaxLines)
 }
 
 func (r *CSVReader) Close(ctx context.Context) error {
-	//TODO implement me
-	panic("implement me")
+	return nil
 }
 
 func (r *CSVReader) Process(ctx context.Context, msg *service.Message) (service.MessageBatch, error) {
-	f, _ := os.Open(r.FilePath)
+	f, err := os.Open(r.FilePath)
+	if err != nil {
+		return nil, err
+	}
 	defer f.Close()
 
-	sc := bufio.NewScanner(f)
-	out := service.MessageBatch{}
+	maxLines := r.MaxLines
+	if maxLines <= 0 {
+		maxLines = defaultMaxLines
+	}
 
-	for sc.Scan() {
-		cols := strings.Split(sc.Text(), ",")
-		row := model.CSVRow{
-			Vincode:      cols[1],
-			ResourceName: cols[3],
-			Value:        cols[4],
+	sc := bufio.NewScanner(f)
+	buf := make([]byte, 0, 64*1024)
+	sc.Buffer(buf, 1024*1024)
+
+	out := service.MessageBatch{}
+	linesRead := 0
+
+	for sc.Scan() && linesRead < maxLines {
+		line := sc.Text()
+		cols := strings.Split(line, ",")
+		if len(cols) < 9 {
+			continue
 		}
+		row := parseCSVRow(cols)
 		m := service.NewMessage(nil)
 		m.SetStructured(row)
 		out = append(out, m)
-
-		if len(out) >= r.Batch {
-			return out, nil
-		}
+		linesRead++
 	}
+
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+
 	return out, nil
+}
+
+func parseCSVRow(cols []string) model.CSVRow {
+	capturedTS, _ := strconv.ParseInt(cols[5], 10, 64)
+	ts, _ := strconv.ParseInt(cols[6], 10, 64)
+	nsTS, _ := strconv.ParseInt(cols[8], 10, 64)
+	return model.CSVRow{
+		ID:           cols[0],
+		Vincode:      cols[1],
+		ResourceID:   cols[2],
+		ResourceName: cols[3],
+		Value:        cols[4],
+		CapturedTS:   capturedTS,
+		TS:           ts,
+		Source:       cols[7],
+		NsTS:         nsTS,
+	}
 }

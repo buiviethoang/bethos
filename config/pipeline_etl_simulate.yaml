@@ -1,0 +1,38 @@
+# ETL simulation: generate 1 tick -> write 1M CSV -> read CSV -> aggregate by device -> Kafka
+# Run: bento --config ./config/pipeline_etl_simulate.yaml
+# Ensure ./data exists and Kafka brokers are up (or switch output to stdout/drop for testing)
+#
+# Multiple Kafka messages: set csv_generator num_vincodes (e.g. 100); sensors from resource_map_path (generalized values).
+# Pipeline exits after one flow because generate count: 1 (one-shot).
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+
+pipeline:
+  processors:
+    - csv_generator:
+        file_path: "./data/telemetry.csv"
+        records_per_tick: 1000
+        bulk_buffer_bytes: 33554432
+        num_vincodes: 1000
+        resource_map_path: "./config/resource_matrix.json"
+
+    - csv_reader:
+        file_path: "./data/telemetry.csv"
+        batch_size: 50000
+        max_lines: 2000000
+
+    - telemetry_aggregator: {}
+
+    - kafka_message_builder: {}
+
+output:
+  kafka_franz:
+    seed_brokers:
+      - localhost:19091
+      - localhost:19092
+      - localhost:19093
+    topic: sensor-service.dispatch.telemetry-aggregated
+    client_id: bento_etl_simulate
