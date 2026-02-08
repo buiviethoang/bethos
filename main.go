@@ -112,14 +112,6 @@ func main() {
 	)
 
 	service.RegisterProcessor(
-		"uppercase_go",
-		service.NewConfigSpec(),
-		func(*service.ParsedConfig, *service.Resources) (service.Processor, error) {
-			return &processors.UppercaseProcessor{}, nil
-		},
-	)
-
-	service.RegisterProcessor(
 		"latest_merger",
 		service.NewConfigSpec().
 			Field(service.NewStringField("strategy").Description("inline = emit batch to output; state_store = write to cache, separate publisher reads and emits").Default("inline")).
@@ -129,41 +121,22 @@ func main() {
 		func(conf *service.ParsedConfig, res *service.Resources) (service.Processor, error) {
 			strategyName, _ := conf.FieldString("strategy")
 			cacheName, _ := conf.FieldString("cache")
-			indexKey, _ := conf.FieldString("cache_index_key")
-			prefix, _ := conf.FieldString("cache_prefix")
 
 			var strat merger.FlushStrategy
 			switch strategyName {
 			case merger.StrategyStateStore:
 				strat = &merger.StateStoreFlushStrategy{
 					CacheName: cacheName,
-					IndexKey:  indexKey,
-					Prefix:    prefix,
 					Resources: res,
 				}
+			case merger.StrategyLogCompacted:
+				strat = &merger.LogCompactedFlushStrategy{}
+			case merger.StrategyWindowStream:
+				strat = merger.NewWindowStreamStrategy()
 			default:
 				strat = merger.InlineFlushStrategy{}
 			}
 			return &processors.LatestMerger{Strategy: strat}, nil
-		},
-	)
-
-	service.RegisterProcessor(
-		"latest_state_publisher",
-		service.NewConfigSpec().
-			Field(service.NewStringField("cache").Description("Cache resource name (same as merger state_store cache)")).
-			Field(service.NewStringField("cache_index_key").Default("")).
-			Field(service.NewStringField("cache_prefix").Default("")),
-		func(conf *service.ParsedConfig, res *service.Resources) (service.Processor, error) {
-			cacheName, _ := conf.FieldString("cache")
-			indexKey, _ := conf.FieldString("cache_index_key")
-			prefix, _ := conf.FieldString("cache_prefix")
-			return &processors.LatestStatePublisher{
-				CacheName: cacheName,
-				IndexKey:  indexKey,
-				Prefix:    prefix,
-				Resources: res,
-			}, nil
 		},
 	)
 

@@ -1,9 +1,11 @@
 package processors
 
 import (
+	"bethos/internal/model"
 	"context"
-	"fmt"
+	"encoding/json"
 	"sync"
+	"time"
 
 	"bethos/internal/merger"
 
@@ -15,13 +17,13 @@ import (
 // (message with _flush: true, e.g. from generate input every 2m), it delegates to FlushStrategy.
 type LatestMerger struct {
 	mu       sync.Mutex
-	state    map[string]map[string]metricSlot // vincode -> sensor_name -> { value, received_at }
+	state    map[string]*DeviceState
 	Strategy merger.FlushStrategy
 }
 
-type metricSlot struct {
-	Value      any
-	ReceivedAt int64
+type DeviceState struct {
+	Metrics  map[string]model.MetricValue
+	LastSeen int64
 }
 
 func (m *LatestMerger) Close(ctx context.Context) error {
@@ -29,93 +31,82 @@ func (m *LatestMerger) Close(ctx context.Context) error {
 }
 
 func (m *LatestMerger) Process(ctx context.Context, msg *service.Message) (service.MessageBatch, error) {
-	obj, err := msg.AsStructured()
+	obj, err := msg.AsBytes()
 	if err != nil {
 		return nil, err
 	}
 
-	in, ok := obj.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("latest_merger: expected map, got %T", obj)
-	}
-
-	// Flush trigger from generate input (interval 2m)
-	if flush, _ := in["_flush"].(bool); flush {
+	// Flush trigger
+	if string(obj) == `{"_flush":true}` {
 		return m.flush(ctx)
 	}
 
-	// Merge incoming aggregated message into state
-	m.merge(in)
-	// Drop this message (do not forward)
+	var payload model.Payload
+	if err := json.Unmarshal(obj, &payload); err != nil {
+		return nil, err
+	}
+
+	m.merge(payload)
+
 	return nil, nil
 }
 
-func (m *LatestMerger) merge(in map[string]any) {
-	data, ok := in["data"].(map[string]any)
-	if !ok {
-		return
-	}
-
-	vin, _ := data["id"].(string)
+func (m *LatestMerger) merge(p model.Payload) {
+	vin := p.Data.ID
 	if vin == "" {
 		return
 	}
 
+	now := time.Now().UnixMilli()
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	if m.state == nil {
-		m.state = make(map[string]map[string]metricSlot)
+		m.state = make(map[string]*DeviceState)
 	}
+
 	dev := m.state[vin]
 	if dev == nil {
-		dev = make(map[string]metricSlot)
+		dev = &DeviceState{
+			Metrics:  make(map[string]model.MetricValue),
+			LastSeen: now,
+		}
 		m.state[vin] = dev
 	}
 
-	for k, v := range data {
-		if k == "id" {
-			continue
-		}
-		slot := toSlot(v)
-		if slot.ReceivedAt >= dev[k].ReceivedAt {
-			dev[k] = slot
+	for sensor, metric := range p.Data.Metrics {
+		if metric.ReceivedAt >= dev.Metrics[sensor].ReceivedAt {
+			dev.Metrics[sensor] = metric
 		}
 	}
-}
 
-func toSlot(v any) metricSlot {
-	s := metricSlot{}
-	if ma, ok := v.(map[string]any); ok {
-		s.Value = ma["value"]
-		if ra, ok := ma["received_at"]; ok {
-			switch t := ra.(type) {
-			case int64:
-				s.ReceivedAt = t
-			case float64:
-				s.ReceivedAt = int64(t)
-			case int:
-				s.ReceivedAt = int64(t)
-			}
-		}
-	}
-	return s
+	dev.LastSeen = now
 }
 
 func (m *LatestMerger) flush(ctx context.Context) (service.MessageBatch, error) {
+	now := time.Now().UnixMilli()
+	const deviceTTL = int64(10 * time.Minute / time.Millisecond)
+
 	m.mu.Lock()
-	snapshot := make(map[string]map[string]merger.MetricSlot, len(m.state))
+
+	snapshot := make(map[string]map[string]model.MetricValue)
 	for vin, dev := range m.state {
-		devCopy := make(map[string]merger.MetricSlot, len(dev))
-		for k, v := range dev {
-			devCopy[k] = merger.MetricSlot{Value: v.Value, ReceivedAt: v.ReceivedAt}
+
+		// TTL eviction
+		if now-dev.LastSeen > deviceTTL {
+			delete(m.state, vin)
+			continue
 		}
-		snapshot[vin] = devCopy
+
+		copyDev := make(map[string]model.MetricValue, len(dev.Metrics))
+		for k, v := range dev.Metrics {
+			copyDev[k] = v
+		}
+		snapshot[vin] = copyDev
 	}
+
 	m.mu.Unlock()
 
-	if m.Strategy != nil {
-		return m.Strategy.OnFlush(ctx, snapshot)
-	}
-	// Default: inline (build batch and return)
-	return merger.InlineFlushStrategy{}.OnFlush(ctx, snapshot)
+	return m.Strategy.OnFlush(ctx, snapshot)
 }

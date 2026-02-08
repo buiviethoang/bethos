@@ -20,8 +20,6 @@ pipeline:
 
     - kafka_message_builder: {}
 
-    - uppercase_go: {}
-
     - telemetry_aggregator:
         resource_map_path: "./config/resource_matrix.json"
 

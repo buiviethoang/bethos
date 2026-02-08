@@ -15,9 +15,9 @@ input:
             - localhost:19093
           topics:
             - sensor-service.dispatch.telemetry-aggregated
-          consumer_group: bento_latest_merger_state
+          consumer_group: bento_state
       - generate:
-          interval: "2m"
+          interval: "30s"
           mapping: 'root = {"_flush": true}'
 
 pipeline:
