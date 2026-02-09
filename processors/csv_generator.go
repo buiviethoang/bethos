@@ -29,12 +29,13 @@ var defaultResources = []resource.Resource{
 }
 
 type CSVGenerator struct {
-	FilePath        string
-	Count           int
-	BulkBufferSize  int
-	NumVincodes     int
-	ResourceMapPath string
-	Seed            int64
+	FilePath            string
+	Count               int
+	BulkBufferSize      int
+	NumVincodes         int
+	ResourceMapPath     string
+	Seed                int64
+	TruncateBeforeWrite bool
 
 	resources []resource.Resource
 	vincodes  []string
@@ -113,7 +114,13 @@ func (c *CSVGenerator) Process(ctx context.Context, msg *service.Message) (servi
 		return nil, err
 	}
 
-	f, err := os.OpenFile(c.FilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	flags := os.O_CREATE | os.O_WRONLY
+	if c.TruncateBeforeWrite {
+		flags |= os.O_TRUNC
+	} else {
+		flags |= os.O_APPEND
+	}
+	f, err := os.OpenFile(c.FilePath, flags, 0644)
 	if err != nil {
 		return nil, err
 	}

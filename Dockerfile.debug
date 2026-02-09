@@ -1,0 +1,32 @@
+# -------- build stage --------
+FROM golang:alpine AS builder
+
+RUN apk add --no-cache git
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -gcflags "all=-N -l" -o /app/app .
+
+# Install Delve (compiled, version-matched)
+RUN go install github.com/go-delve/delve/cmd/dlv@latest
+
+# -------- runtime stage --------
+FROM alpine:latest
+
+RUN apk add --no-cache ca-certificates
+
+WORKDIR /app
+COPY --from=builder /app/app /app/app
+COPY --from=builder /go/bin/dlv /usr/local/bin/dlv
+
+EXPOSE 3000
+EXPOSE 40000
+
+ENTRYPOINT ["dlv"]
+CMD ["dap", "--listen=:40000", "--log"]
+

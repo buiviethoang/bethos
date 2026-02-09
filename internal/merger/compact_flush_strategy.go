@@ -38,7 +38,6 @@ func (LogCompactedFlushStrategy) OnFlush(
 		msg.SetStructured(payload)
 
 		// This makes Kafka partition by VIN
-		msg.MetaSet("kafka_key", vin)
 		msg.MetaSet("vincode", vin)
 
 		batch = append(batch, msg)

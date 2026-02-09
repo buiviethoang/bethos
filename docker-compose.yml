@@ -31,13 +31,6 @@ services:
     volumes:
       - grafana-data:/var/lib/grafana
 
-  sqlc:
-    image: sqlc/sqlc:latest
-    container_name: sqlc
-    working_dir: /src
-    volumes:
-      - ./:/src
-
   zookeeper:
     image: confluentinc/cp-zookeeper:${CONFLUENT_PLATFORM_VERSION:-7.4.1}
     ports:
@@ -70,7 +63,7 @@ services:
     ports:
       - "19091:19091"
     volumes:
-      - ./data/kafka1:/var/lib/kafka/data
+      - kafka1-data:/var/lib/kafka/data
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
@@ -99,7 +92,7 @@ services:
     ports:
       - "19092:19092"
     volumes:
-      - ./data/kafka2:/var/lib/kafka/data
+      - kafka2-data:/var/lib/kafka/data
     environment:
       KAFKA_BROKER_ID: 2
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
@@ -128,7 +121,7 @@ services:
     ports:
       - "19093:19093"
     volumes:
-      - ./data/kafka3:/var/lib/kafka/data
+      - kafka3-data:/var/lib/kafka/data
     environment:
       KAFKA_BROKER_ID: 3
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
@@ -169,3 +162,6 @@ services:
 volumes:
   influxdb-data:
   grafana-data:
+  kafka1-data:
+  kafka2-data:
+  kafka3-data:

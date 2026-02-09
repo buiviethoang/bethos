@@ -1,12 +1,14 @@
-# ETL simulation: generate 1 tick -> write 1M CSV -> read CSV -> aggregate by device -> Kafka
-# Run: bento --config ./config/pipeline_etl_simulate.yaml
-# Ensure ./data exists and Kafka brokers are up (or switch output to stdout/drop for testing)
+# ETL with varied messages for testing merger logic.
+# Produces multiple batches of telemetry so the same VIN gets several messages with
+# different values/received_at — you can verify "latest wins" in the compacted topic.
 #
-# Multiple Kafka messages: set csv_generator num_vincodes (e.g. 100); sensors from resource_map_path (generalized values).
-# Pipeline exits after one flow because generate count: 1 (one-shot).
+# Run: BENTO_CONFIG=./config/pipeline_etl_varied.yaml go run .
+# Then run the log_compacted pipeline and check compacted topic + logs.
+#
+# Tips: Delete ./data/telemetry.csv before a run for a clean slate; ensure Kafka is up.
 input:
   generate:
-    # count: 4
+    # count: 6
     interval: "10s"
     mapping: 'root = {}'
 
@@ -14,15 +16,17 @@ pipeline:
   processors:
     - csv_generator:
         file_path: "./data/telemetry.csv"
-        records_per_tick: 1000
+        records_per_tick: 800
         bulk_buffer_bytes: 33554432
-        num_vincodes: 1000
+        num_vincodes: 10
         resource_map_path: "./config/resource_matrix.json"
+        seed: 0
+        truncate_before_write: true
 
     - csv_reader:
         file_path: "./data/telemetry.csv"
         batch_size: 50000
-        max_lines: 2000000
+        max_lines: 2000
 
     - telemetry_aggregator:
         resource_matrix_path: "config/resource_matrix.json"
@@ -36,5 +40,5 @@ output:
       - localhost:19092
       - localhost:19093
     topic: sensor-service.dispatch.telemetry-aggregated
-    client_id: bento_etl_simulate
+    client_id: bento_etl_varied
     key: ${! meta("vincode") }

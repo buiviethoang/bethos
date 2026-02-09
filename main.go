@@ -24,7 +24,8 @@ func main() {
 			Field(service.NewIntField("bulk_buffer_bytes").Default(0)).
 			Field(service.NewIntField("num_vincodes").Description("Number of distinct devices (vincodes) to spread rows across").Default(1)).
 			Field(service.NewStringField("resource_map_path").Description("Path to resource_matrix.json for sensor list; empty = built-in list").Default("")).
-			Field(service.NewIntField("seed").Description("Random seed for reproducible data; 0 = time-based").Default(0)),
+			Field(service.NewIntField("seed").Description("Random seed for reproducible data; 0 = time-based").Default(0)).
+			Field(service.NewBoolField("truncate_before_write").Description("If true, truncate the CSV file before each write (each tick gets a fresh file; use for varied ETL).").Default(false)),
 		func(conf *service.ParsedConfig, _ *service.Resources) (service.Processor, error) {
 
 			filePath, err := conf.FieldString("file_path")
@@ -41,14 +42,16 @@ func main() {
 			numVincodes, _ := conf.FieldInt("num_vincodes")
 			resourceMapPath, _ := conf.FieldString("resource_map_path")
 			seed, _ := conf.FieldInt("seed")
+			truncate, _ := conf.FieldBool("truncate_before_write")
 
 			return &processors.CSVGenerator{
-				FilePath:        filePath,
-				Count:           count,
-				BulkBufferSize:  bufBytes,
-				NumVincodes:     numVincodes,
-				ResourceMapPath: resourceMapPath,
-				Seed:            int64(seed),
+				FilePath:            filePath,
+				Count:               count,
+				BulkBufferSize:      bufBytes,
+				NumVincodes:         numVincodes,
+				ResourceMapPath:     resourceMapPath,
+				Seed:                int64(seed),
+				TruncateBeforeWrite: truncate,
 			}, nil
 		},
 	)

@@ -82,7 +82,7 @@ func (a *Aggregator) ProcessBatch(
 		payload := map[string]any{
 			"num_of_data": 1,
 			"data":        data,
-			"produce_at":  now,
+			"produced_at": now,
 		}
 
 		newMsg.SetStructured(payload)

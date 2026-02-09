@@ -1,3 +1,7 @@
+# Create compacted topic for latest telemetry per device (VIN).
+# Required: cleanup.policy=compact so only the latest record per key is retained.
+# Run from Kafka container or with kafka-topics.sh on PATH (e.g. docker exec -it kafka1 bash).
+#
 kafka-topics.sh \
   --bootstrap-server localhost:19091 \
   --create \

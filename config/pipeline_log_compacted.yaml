@@ -1,3 +1,4 @@
+# For prod: replace seed_brokers with your brokers (e.g. via env KAFKA_BROKER_1/2/3 and config template).
 input:
   broker:
     inputs:
@@ -9,10 +10,14 @@ input:
           topics:
             - sensor-service.dispatch.telemetry-aggregated
           consumer_group: bento_latest_merger_log_compacted
+          client_id: bento_latest_merger_log_compacted_input
+          start_from_oldest: true
+          # If vin_count stays 0: consumer may be past those messages (committed offset). Reset group offsets to earliest in Kafka UI/CLI, or produce new messages after pipeline start.
+          # session/heartbeat/rebalance timeouts not supported by kafka_franz in this Bento version; if UNKNOWN_MEMBER_ID occurs, try lowering checkpoint_limit or use the "kafka" (Sarama) input which supports group timeouts
 
       # flush trigger every 2 minutes
       - generate:
-          interval: "2m"
+          interval: "30s"
           mapping: 'root = {"_flush": true}'
 
 pipeline:
@@ -28,3 +33,4 @@ output:
       - localhost:19093
     topic: sensor-service.dispatch.telemetry-latest-compacted
     client_id: bento_latest_merger_log_compacted
+    key: ${! meta("vincode") }
