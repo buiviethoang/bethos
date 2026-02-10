@@ -3,6 +3,7 @@ package influxdb
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"time"
 
@@ -16,13 +17,18 @@ import (
 )
 
 const (
-	defaultChunkDuration = 2 * time.Second
-	defaultLookback      = 10 * time.Second
-	defaultBatchSize     = 5000
+	defaultChunkDuration     = 2 * time.Second
+	defaultLookback          = 10 * time.Second
+	defaultBatchSize         = 5000
+	defaultRetryMaxAttempts  = 3
+	defaultRetryInitial      = 1 * time.Second
+	defaultRetryMaxInterval  = 30 * time.Second
+	defaultRetryMultiplier   = 2.0
+	defaultRetryJitterFactor = 0.1
 )
 
-// InfluxDBInput implements service.BatchInput for querying InfluxDB by Pod in 2s chunks (10s lookback)
-// and emitting telemetry records (id, vincode, resource_id, resource_name, value, captured_ts, ts, source).
+// InfluxDBInput implements service.BatchInput for querying InfluxDB by Pod in chunks (lookback window).
+// When tick_interval > 0, it runs indefinitely: each cycle uses lookback from now, then waits tick_interval before the next cycle (same as ETL flow ticking every 10s).
 type InfluxDBInput struct {
 	url             string
 	token           string
@@ -31,19 +37,29 @@ type InfluxDBInput struct {
 	pods            []string
 	chunkDuration   time.Duration
 	lookback        time.Duration
+	tickInterval    time.Duration // if > 0, wait this long between cycles and loop; if 0, run one cycle then end
 	resourceMapPath string
 	batchSize       int
 	measurement     string
+	// retry for fault tolerance
+	retryMaxAttempts  int
+	retryInitial      time.Duration
+	retryMaxInterval  time.Duration
+	retryMultiplier   float64
+	retryJitterFactor float64
+	checkpointPath    string // optional: persist cycle end for idempotency (Option A)
 
 	client   influxdb2.Client
 	queryAPI api.QueryAPI
 	cache    *resource.Cache
 	// cursor: pod index, chunk index within lookback window
-	podIndex   int
-	chunkIndex int
-	cycleStart time.Time
-	done       bool
-	pending    []*service.Message
+	podIndex     int
+	chunkIndex   int
+	cycleStart   time.Time
+	done         bool
+	pending      []*service.Message
+	betweenCycles bool   // true when waiting for next tick before starting a new cycle
+	nextCycleAt  time.Time
 }
 
 // Config for the InfluxDB input (parsed from Bento config).
@@ -55,9 +71,17 @@ type Config struct {
 	Pods            []string
 	ChunkDuration   time.Duration
 	Lookback        time.Duration
+	TickInterval    time.Duration // 0 = one cycle then end; >0 = wait between cycles and loop (e.g. 10s)
 	ResourceMapPath string
 	BatchSize       int
 	Measurement     string
+	// Retry for InfluxDB query failures (fault tolerance)
+	RetryMaxAttempts  int
+	RetryInitial      time.Duration
+	RetryMaxInterval  time.Duration
+	RetryMultiplier   float64
+	RetryJitterFactor float64
+	CheckpointPath    string // optional: persist cycle end time to avoid reprocessing on restart
 }
 
 func New(cfg Config) (*InfluxDBInput, error) {
@@ -73,26 +97,48 @@ func New(cfg Config) (*InfluxDBInput, error) {
 	if cfg.Measurement == "" {
 		cfg.Measurement = "telemetry"
 	}
+	if cfg.RetryMaxAttempts <= 0 {
+		cfg.RetryMaxAttempts = defaultRetryMaxAttempts
+	}
+	if cfg.RetryInitial <= 0 {
+		cfg.RetryInitial = defaultRetryInitial
+	}
+	if cfg.RetryMaxInterval <= 0 {
+		cfg.RetryMaxInterval = defaultRetryMaxInterval
+	}
+	if cfg.RetryMultiplier <= 0 {
+		cfg.RetryMultiplier = defaultRetryMultiplier
+	}
+	if cfg.RetryJitterFactor <= 0 {
+		cfg.RetryJitterFactor = defaultRetryJitterFactor
+	}
 	cache, err := resource.LoadFromResourceMatrix(cfg.ResourceMapPath)
 	if err != nil {
 		return nil, fmt.Errorf("influxdb input: load resource matrix: %w", err)
 	}
 	return &InfluxDBInput{
-		url:             cfg.URL,
-		token:           cfg.Token,
-		org:             cfg.Org,
-		bucket:          cfg.Bucket,
-		pods:            cfg.Pods,
-		chunkDuration:   cfg.ChunkDuration,
-		lookback:        cfg.Lookback,
-		resourceMapPath: cfg.ResourceMapPath,
-		batchSize:       cfg.BatchSize,
-		measurement:     cfg.Measurement,
-		cache:           cache,
-		podIndex:        0,
-		chunkIndex:      0,
-		cycleStart:      time.Now().Add(-cfg.Lookback),
-		pending:         nil,
+		url:               cfg.URL,
+		token:             cfg.Token,
+		org:               cfg.Org,
+		bucket:            cfg.Bucket,
+		pods:              cfg.Pods,
+		chunkDuration:     cfg.ChunkDuration,
+		lookback:          cfg.Lookback,
+		tickInterval:      cfg.TickInterval,
+		resourceMapPath:   cfg.ResourceMapPath,
+		batchSize:         cfg.BatchSize,
+		measurement:       cfg.Measurement,
+		retryMaxAttempts:  cfg.RetryMaxAttempts,
+		retryInitial:     cfg.RetryInitial,
+		retryMaxInterval:  cfg.RetryMaxInterval,
+		retryMultiplier:   cfg.RetryMultiplier,
+		retryJitterFactor: cfg.RetryJitterFactor,
+		checkpointPath:    cfg.CheckpointPath,
+		cache:             cache,
+		podIndex:          0,
+		chunkIndex:        0,
+		cycleStart:        time.Now().Add(-cfg.Lookback),
+		pending:           nil,
 	}, nil
 }
 
@@ -121,6 +167,28 @@ func (i *InfluxDBInput) ReadBatch(ctx context.Context) (service.MessageBatch, se
 		return batch, func(context.Context, error) error { return nil }, nil
 	}
 
+	// Between cycles: wait for next tick then start a new cycle (same as ETL ticking every 10s)
+	if i.betweenCycles {
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-time.After(time.Until(i.nextCycleAt)):
+			// fall through
+		}
+		now := time.Now()
+		i.cycleStart = now.Add(-i.lookback)
+		if i.checkpointPath != "" {
+			if cp, err := LoadCheckpoint(i.checkpointPath); err == nil && !cp.IsZero() {
+				if cp.After(i.cycleStart) {
+					i.cycleStart = cp
+				}
+			}
+		}
+		i.podIndex = 0
+		i.chunkIndex = 0
+		i.betweenCycles = false
+	}
+
 	// No pods configured: end input
 	if len(i.pods) == 0 {
 		i.done = true
@@ -135,6 +203,16 @@ func (i *InfluxDBInput) ReadBatch(ctx context.Context) (service.MessageBatch, se
 		i.chunkIndex = 0
 		i.podIndex++
 		if i.podIndex >= len(i.pods) {
+			// Cycle complete: optional checkpoint (idempotency Option A)
+			if i.checkpointPath != "" {
+				cycleEnd := i.cycleStart.Add(i.lookback)
+				_ = SaveCheckpoint(i.checkpointPath, cycleEnd)
+			}
+			if i.tickInterval > 0 {
+				i.betweenCycles = true
+				i.nextCycleAt = time.Now().Add(i.tickInterval)
+				return i.ReadBatch(ctx)
+			}
 			i.done = true
 			return nil, nil, service.ErrEndOfInput
 		}
@@ -155,27 +233,56 @@ func (i *InfluxDBInput) ReadBatch(ctx context.Context) (service.MessageBatch, se
 		pod,
 	)
 
-	result, err := i.queryAPI.Query(ctx, fluxQuery)
-	if err != nil {
-		return nil, nil, err
-	}
-
 	var batch service.MessageBatch
-	for result.Next() {
-		rec := result.Record()
-		row := i.recordToRow(rec, pod)
-		if row == nil {
+	var lastErr error
+	for attempt := 0; attempt < i.retryMaxAttempts; attempt++ {
+		if attempt > 0 {
+			backoff := i.retryInitial
+			for k := 0; k < attempt && backoff < i.retryMaxInterval; k++ {
+				backoff = time.Duration(float64(backoff) * i.retryMultiplier)
+			}
+			if backoff > i.retryMaxInterval {
+				backoff = i.retryMaxInterval
+			}
+			jitter := time.Duration(float64(backoff) * i.retryJitterFactor * (2*rand.Float64() - 1))
+			backoff += jitter
+			if backoff < 0 {
+				backoff = i.retryInitial
+			}
+			select {
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+		result, err := i.queryAPI.Query(ctx, fluxQuery)
+		if err != nil {
+			lastErr = err
 			continue
 		}
-		msg := service.NewMessage(nil)
-		msg.SetStructured(row)
-		batch = append(batch, msg)
-	}
-	if result.Err() != nil {
+		batch = batch[:0]
+		for result.Next() {
+			rec := result.Record()
+			row := i.recordToRow(rec, pod)
+			if row == nil {
+				continue
+			}
+			msg := service.NewMessage(nil)
+			msg.SetStructured(row)
+			batch = append(batch, msg)
+		}
+		queryErr := result.Err()
 		_ = result.Close()
-		return nil, nil, result.Err()
+		if queryErr != nil {
+			lastErr = queryErr
+			continue
+		}
+		lastErr = nil
+		break
 	}
-	_ = result.Close()
+	if lastErr != nil {
+		return nil, nil, lastErr
+	}
 
 	i.chunkIndex++
 

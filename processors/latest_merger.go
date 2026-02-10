@@ -42,7 +42,6 @@ func isFlushTrigger(obj []byte) bool {
 }
 
 func (m *LatestMerger) Close(ctx context.Context) error {
-	// Graceful shutdown: run flush for observability (batch cannot be emitted from Close in Bento)
 	_, err := m.flush(ctx)
 	if err != nil {
 		log.Printf("%s event=shutdown_flush error=%v", logPrefix, err)
@@ -59,7 +58,6 @@ func (m *LatestMerger) Process(ctx context.Context, msg *service.Message) (servi
 		return nil, err
 	}
 
-	// Flush trigger (parse JSON so {"_flush": true} with any whitespace is accepted)
 	if isFlushTrigger(obj) {
 		return m.flush(ctx)
 	}
@@ -123,7 +121,6 @@ func (m *LatestMerger) flush(ctx context.Context) (service.MessageBatch, error) 
 	snapshot := make(map[string]map[string]model.MetricValue)
 	for vin, dev := range m.state {
 
-		// TTL eviction
 		if now-dev.LastSeen > deviceTTL {
 			delete(m.state, vin)
 			continue

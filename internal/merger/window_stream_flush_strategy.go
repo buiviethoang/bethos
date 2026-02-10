@@ -40,7 +40,6 @@ func (w *WindowStreamStrategy) OnFlush(
 	ctx context.Context,
 	state FlushState,
 ) (service.MessageBatch, error) {
-
 	now := time.Now().UnixMilli()
 	currentWindow := w.windowStart(now)
 
@@ -53,9 +52,7 @@ func (w *WindowStreamStrategy) OnFlush(
 		win = make(map[string]model.MetricValue)
 		w.windows[currentWindow] = win
 	}
-
 	for vin, metrics := range state {
-		// flatten metrics (already latest-per-sensor)
 		win[vin] = model.MetricValue{
 			Value:      metrics,
 			ReceivedAt: now,
@@ -63,32 +60,22 @@ func (w *WindowStreamStrategy) OnFlush(
 	}
 
 	var batch service.MessageBatch
-
-	// emit closed windows
 	for ws, data := range w.windows {
 		if ws+w.WindowSize.Milliseconds()+w.AllowedLateness.Milliseconds() <= now {
-
 			for vin, metric := range data {
 				payload := model.Payload{
-					NumOfData: 1,
-					Data: model.Data{
-						ID:      vin,
-						Metrics: metric.Value.(map[string]model.MetricValue),
-					},
+					NumOfData:  1,
+					Data:      model.Data{ID: vin, Metrics: metric.Value.(map[string]model.MetricValue)},
 					ProducedAt: ws + int64(w.WindowSize.Milliseconds()),
 				}
-
 				msg := service.NewMessage(nil)
 				msg.SetStructured(payload)
 				msg.MetaSet("kafka_key", vin)
 				msg.MetaSet("window_start", fmt.Sprintf("%d", ws))
-
 				batch = append(batch, msg)
 			}
-
 			delete(w.windows, ws)
 		}
 	}
-
 	return batch, nil
 }

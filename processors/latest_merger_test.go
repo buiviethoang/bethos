@@ -134,13 +134,15 @@ func TestLatestMerger_Merge_LatestWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AsStructured: %v", err)
 	}
-	payload, ok := obj.(map[string]any)
+	payload, ok := obj.(model.Payload)
 	if !ok {
-		t.Fatalf("payload not map: %T", obj)
+		t.Fatalf("payload not model.Payload: %T", obj)
 	}
-	data, _ := payload["data"].(map[string]any)
-	sensorA, _ := data["sensor_a"].(map[string]any)
-	value, _ := sensorA["value"].(string)
+	mv, ok := payload.Data.Metrics["sensor_a"]
+	if !ok {
+		t.Fatal("sensor_a not in payload.Data.Metrics")
+	}
+	value, _ := mv.Value.(string)
 	if value != "new" {
 		t.Errorf("sensor_a.value = %q, want \"new\" (latest received_at wins)", value)
 	}

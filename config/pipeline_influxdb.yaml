@@ -1,4 +1,6 @@
-# Pipeline using InfluxDB input: query by Pod (2s chunks, 10s lookback), then aggregate and push to Kafka.
+# InfluxDB pipeline: same logic as ETL flow but source is InfluxDB instead of CSV.
+# - Tick every 10s (tick_interval); each tick uses lookback 10s, stateful pod→chunk batching, merge by vincode, then send to aggregated compact topic.
+# - Create topic with cleanup.policy=compact (see config/kafka_config). Key = vincode for compaction.
 # Set url, token, org, bucket and pods to match your InfluxDB. Run: BENTO_CONFIG=./config/pipeline_influxdb.yaml go run .
 input:
   influxdb:
@@ -11,13 +13,21 @@ input:
       - "pod-2"
     chunk_duration: "2s"
     lookback: "10s"
+    tick_interval: "10s"
     resource_map_path: "./config/resource_matrix.json"
     batch_size: 5000
     measurement: "telemetry"
+    # optional: fault tolerance (retry InfluxDB query)
+    # retry_max_attempts: 3
+    # retry_initial_interval: "1s"
+    # retry_max_interval: "30s"
+    # optional: idempotency Option A — persist cycle end to avoid reprocessing on restart (e.g. 1 replica or shared volume)
+    # checkpoint_path: "/data/influxdb_checkpoint"
 
 pipeline:
   processors:
-    - telemetry_aggregator: {}
+    - telemetry_aggregator:
+        resource_matrix_path: "config/resource_matrix.json"
     - kafka_message_builder: {}
 
 output:
@@ -28,3 +38,4 @@ output:
       - localhost:19093
     topic: sensor-service.dispatch.telemetry-aggregated
     client_id: bento_influxdb
+    key: ${! meta("vincode") }

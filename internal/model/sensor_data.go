@@ -8,6 +8,13 @@ type Payload struct {
 	ProducedAt int64 `json:"produced_at"`
 }
 
+// PayloadBatch is a single message containing multiple devices (for batched Kafka output to reduce network I/O).
+type PayloadBatch struct {
+	NumOfData  int    `json:"num_of_data"`
+	Data       []Data `json:"data"`
+	ProducedAt int64  `json:"produced_at"`
+}
+
 type Data struct {
 	ID      string                 `json:"id"`
 	Metrics map[string]MetricValue `json:"-"`

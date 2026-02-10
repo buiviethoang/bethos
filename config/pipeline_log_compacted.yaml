@@ -24,6 +24,7 @@ pipeline:
   processors:
     - latest_merger:
         strategy: log_compacted
+        # batch_size: 100   # optional: devices per message (1 = one msg/device; >1 = batched to reduce network I/O). Use topic e.g. telemetry-latest-batched for batched output.
 
 output:
   kafka_franz:

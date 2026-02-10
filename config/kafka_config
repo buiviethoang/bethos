@@ -1,7 +1,18 @@
-# Create compacted topic for latest telemetry per device (VIN).
-# Required: cleanup.policy=compact so only the latest record per key is retained.
-# Run from Kafka container or with kafka-topics.sh on PATH (e.g. docker exec -it kafka1 bash).
-#
+# Kafka topic creation. Run from Kafka container or with kafka-topics.sh on PATH (e.g. docker exec -it kafka1 bash).
+# cleanup.policy=compact: only the latest record per key is retained; use with start_from_oldest so consumer can replay on restart.
+
+# 1) ETL output topic (aggregated telemetry per device). Compact so consumer pipeline can read from earliest and get latest per VIN.
+kafka-topics.sh \
+  --bootstrap-server localhost:19091 \
+  --create \
+  --topic sensor-service.dispatch.telemetry-aggregated \
+  --partitions 12 \
+  --replication-factor 3 \
+  --config cleanup.policy=compact \
+  --config min.cleanable.dirty.ratio=0.01 \
+  --config segment.ms=600000
+
+# 2) Latest merger output topic (full latest snapshot per VIN, emitted every flush).
 kafka-topics.sh \
   --bootstrap-server localhost:19091 \
   --create \
